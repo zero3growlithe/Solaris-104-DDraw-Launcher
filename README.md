@@ -17,6 +17,7 @@ modern Windows:
 |------|--------------|
 | `Launch Solaris 104.ps1` | The actual launcher (PowerShell 5.1+, ships with Windows). Validates the disc, starts the game with the disc as its working directory, then monitors the game's windows while it runs. |
 | `Launch Solaris 104.cmd` | Double-click wrapper around the PowerShell script. Forwards all arguments, pauses the console on error, propagates the game's exit code. |
+| `Repair Solaris 104 ISO.ps1` | Image-repair tool (see "Repairing a protected disc image" below): turns a Solaris 104 disc image that still carries the original `0x7FFFFFFF` protective file sizes into a standard-compliant, fully readable `<name>_fixed3.iso`. |
 
 Both files belong **next to the game executable** in your local game folder:
 
@@ -75,6 +76,48 @@ game's process id) and enforces a sensible z-order:
 The monitor is pure user-mode windowing (no graphics hooking, no injection
 into the game process) and terminates with the game process. Pass
 `-DisableWindowFix` to run the game without it.
+
+## Repairing a protected disc image
+
+On the original Solaris 104 disc the ISO9660 directory records for
+`SOLARIS.EXE` and `DATA.RES` carry a **protective fake size** — both files
+report `0x7FFFFFFF` (2147483647) bytes instead of their real length. That is
+exactly what the game's own original-CD check (and therefore the launcher's
+disc validation) looks for, but it also means standard tools cannot make
+sense of a direct copy of the disc image: Windows/ISO tooling sees two
+multi-terabyte files, and the volume-space size in the descriptors does not
+match reality either.
+
+`Repair Solaris 104 ISO.ps1` turns such an image into a **standard-compliant
+ISO**:
+
+* requires a 2048-byte-per-sector image (a plain ISO or the output of a
+  2352→2048 BIN conversion);
+* scans the descriptor sectors 16..47 and finds the ISO9660 primary volume
+  descriptor and the Joliet supplementary descriptor;
+* walks the root directory tree of **both** descriptor trees and collects
+  every directory record whose size field equals `2147483647`;
+* estimates the true size of each such file by measuring the gap to the next
+  file extent in the tree (LBA difference × 2048 bytes; the result is an
+  upper bound that covers the whole extent);
+* writes `<input name>_fixed3.iso` next to the input — a full byte copy with
+  the **volume-space size corrected** on every volume descriptor (little- and
+  big-endian fields) and every protected **record size patched** at both
+  offsets (+10 little-endian, +14 big-endian copy);
+* verifies its own work: reads the patched bytes back, dumps the first bytes
+  of each repaired file extent (and flags a valid Windows-EXE `MZ` header),
+  and re-checks that the output size matches the input exactly —
+  `RESULT=OK, records fixed=N` on success.
+
+The input file is never modified. The launcher deliberately requires the
+untouched original (with the `0x7FFFFFFF` markers), while the repaired
+`_fixed3.iso` is what you use when you need the disc data readable by normal
+software — Explorer, archive/ISO tools, extraction pipelines. The repaired
+image will **not** pass the launcher's original-disc validation, by design.
+
+```
+powershell -File "Repair Solaris 104 ISO.ps1" -SourcePath "SOLARIS104-01.iso"
+```
 
 ## Usage
 
